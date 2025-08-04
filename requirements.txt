@@ -1,0 +1,11 @@
+langgraph>=0.3.27
+langchain-core>=0.2.38
+langchain-openai>=0.2.0
+langsmith>=0.1.63
+openai>=1.50.0
+numpy>=1.24.3
+matplotlib>=3.7.1
+faiss-cpu>=1.7.4
+pandas>=2.0.3
+httpx>=0.25.0
+tenacity>=8.0.0
