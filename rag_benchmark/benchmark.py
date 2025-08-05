@@ -43,19 +43,40 @@ class BenchmarkRunner:
             print(f"Error in test: {e}")
             return "", float('inf')
     
-    async def run_benchmark_batch(self, app_name: str, app, queries: List[str], runs_per_query: int = 50):
-        """Run benchmark for a single app."""
-        print(f"\nRunning {app_name} benchmark...")
+    async def run_benchmark_batch(self, app_name: str, app, queries: List[str], runs_per_query: int = 50, batch_size: int = 20):
+        """Run benchmark for a single app with concurrent batching."""
+        print(f"\nRunning {app_name} benchmark with {batch_size} concurrent requests...")
         print(f"Testing {len(queries)} queries with {runs_per_query} runs each ({len(queries) * runs_per_query} total)")
         
         total_runs = len(queries) * runs_per_query
         completed_runs = 0
         
+        # Create all test tasks
+        all_tasks = []
         for query_idx, query in enumerate(queries):
-            print(f"\nQuery {query_idx + 1}/{len(queries)}: {query[:50]}...")
-            
             for run_idx in range(runs_per_query):
-                response, latency = await self.run_single_test(app, query)
+                all_tasks.append((query, query_idx, run_idx))
+        
+        # Process tasks in batches
+        for i in range(0, len(all_tasks), batch_size):
+            batch_tasks = all_tasks[i:i + batch_size]
+            
+            # Create concurrent tasks for this batch
+            concurrent_tasks = [
+                self.run_single_test(app, query) 
+                for query, _, _ in batch_tasks
+            ]
+            
+            # Run batch concurrently
+            batch_results = await asyncio.gather(*concurrent_tasks, return_exceptions=True)
+            
+            # Process results
+            for j, (result, (query, query_idx, run_idx)) in enumerate(zip(batch_results, batch_tasks)):
+                if isinstance(result, Exception):
+                    response, latency = "", float('inf')
+                    print(f"Error in batch task: {result}")
+                else:
+                    response, latency = result
                 
                 self.results[app_name]["latencies"].append(latency)
                 self.results[app_name]["responses"].append({
@@ -66,9 +87,11 @@ class BenchmarkRunner:
                 })
                 
                 completed_runs += 1
-                if completed_runs % 50 == 0:
-                    avg_latency = statistics.mean(self.results[app_name]["latencies"][-50:])
-                    print(f"  Progress: {completed_runs}/{total_runs} runs completed. Avg latency (last 50): {avg_latency:.3f}s")
+            
+            # Progress update
+            if completed_runs % (batch_size * 2) == 0 or completed_runs >= total_runs:
+                avg_latency = statistics.mean(self.results[app_name]["latencies"][-min(50, len(self.results[app_name]["latencies"])):])
+                print(f"  Progress: {completed_runs}/{total_runs} runs completed. Avg latency (recent): {avg_latency:.3f}s")
         
         # Calculate statistics
         latencies = self.results[app_name]["latencies"]
@@ -106,10 +129,10 @@ class BenchmarkRunner:
         print(f"Total runs per app: {len(queries) * runs_per_query}")
         
         # Run LangGraph benchmark
-        await self.run_benchmark_batch("langgraph", self.langgraph_app, queries, runs_per_query)
+        await self.run_benchmark_batch("langgraph", self.langgraph_app, queries, runs_per_query, batch_size=20)
         
         # Run OpenAI benchmark
-        await self.run_benchmark_batch("openai", self.openai_app, queries, runs_per_query)
+        await self.run_benchmark_batch("openai", self.openai_app, queries, runs_per_query, batch_size=20)
         
         end_time = time.time()
         total_time = end_time - start_time
